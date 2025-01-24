@@ -1,4 +1,5 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.middleware.cors import CORSMiddleware  # Importação correta do CORS
 import pandas as pd
 import re
 from io import StringIO
