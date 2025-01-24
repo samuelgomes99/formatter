@@ -5,6 +5,14 @@ from io import StringIO
 
 app = FastAPI()
 
+# Configuração do CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Permite todas as origens (não recomendado para produção)
+    allow_credentials=True,
+    allow_methods=["*"],  # Permite todos os métodos (GET, POST, etc.)
+    allow_headers=["*"],  # Permite todos os headers
+)
 
 def formatar_telefone(numero):
     # Expressão regular para capturar o código do país e o número completo
