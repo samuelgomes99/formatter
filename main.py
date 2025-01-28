@@ -43,13 +43,11 @@ def formatar_numero(numero: str) -> str:
     restante = numero_normalizado[2:]
 
     # Aplica a regra do nono dígito
-    if int(ddd) > 30:  # DDD maior que 30
-        if restante.startswith('9') and len(restante) == 9:
-            pass  # Já está correto, não faz nada
-        elif restante.startswith('9') and len(restante) > 9:
+    if int(ddd) >= 30:  # DDD maior ou igual a 30
+        if restante.startswith('9'):
             restante = restante[1:]  # Remove o '9' inicial
-    else:  # DDD menor ou igual a 30
-        if not restante.startswith('9') and len(restante) == 8:
+    else:  # DDD menor que 30
+        if not restante.startswith('9'):
             restante = '9' + restante  # Adiciona o '9' inicial
 
     # Retorna o número no formato final
