@@ -106,3 +106,7 @@ async def formatar_telefones(
 @app.get("/")
 async def root():
     return {"message": "API de formatação de telefones. Use o endpoint /formatar-telefones."}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8081)
