@@ -7,40 +7,53 @@ from fastapi.responses import StreamingResponse
 
 app = FastAPI()
 
-# Configuração do CORS
+# Configuração do CORS para permitir todas as origens
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Altere para as origens permitidas em produção
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-def formatar_telefone(numero):
-    # Expressão regular para capturar o código do país e o número completo
-    padrao = re.compile(r'(\+\d{1,3})?(\d{2})(\d{8,})')
-    match = padrao.match(str(numero))  # Converte para string para evitar erros
+def normalizar_telefone(numero: str) -> str:
+    """
+    Remove todos os caracteres que não são números de um telefone.
+    """
+    return re.sub(r'\D', '', numero)
 
-    if not match:
-        return numero  # Retorna o número original se não corresponder ao padrão esperado
+def formatar_numero(numero: str) -> str:
+    """
+    Formata o número de telefone para o padrão:
+    +55[DDD][Número com ou sem nono dígito, dependendo do DDD].
+    """
+    # Remove caracteres não numéricos
+    numero_normalizado = normalizar_telefone(numero)
 
-    codigo_pais, ddd, resto = match.groups()
-    codigo_pais = codigo_pais if codigo_pais else '+55'  # Assume +55 se não houver código do país
+    # Verifica se o número já possui código do país
+    if numero_normalizado.startswith('55'):
+        numero_normalizado = numero_normalizado[2:]  # Remove o '55'
 
-    ddd = int(ddd)
+    # Verifica se o número tem pelo menos 10 dígitos (2 DDD + 8 número)
+    if len(numero_normalizado) < 10:
+        return numero  # Retorna o número original se for inválido
 
-    # Aplica as regras de formatação
-    if ddd > 30:
-        # Remove o dígito 9 após o DDD, se existir
-        if resto and resto[0] == '9':
-            resto = resto[1:]
-    else:
-        # Adiciona o dígito 9 após o DDD, se não existir
-        if resto and resto[0] != '9':
-            resto = '9' + resto
+    # Extrai DDD e o restante do número
+    ddd = numero_normalizado[:2]
+    restante = numero_normalizado[2:]
 
-    # Retorna o número formatado
-    return f"{codigo_pais}{ddd}{resto}"
+    # Aplica a regra do nono dígito
+    if int(ddd) > 30:  # DDD maior que 30
+        if restante.startswith('9') and len(restante) == 9:
+            pass  # Já está correto, não faz nada
+        elif restante.startswith('9') and len(restante) > 9:
+            restante = restante[1:]  # Remove o '9' inicial
+    else:  # DDD menor ou igual a 30
+        if not restante.startswith('9') and len(restante) == 8:
+            restante = '9' + restante  # Adiciona o '9' inicial
+
+    # Retorna o número no formato final
+    return f"+55{ddd}{restante}"
 
 @app.post("/formatar-telefones")
 async def formatar_telefones(
@@ -48,43 +61,47 @@ async def formatar_telefones(
     coluna_telefone: str = Form(...)
 ):
     # Verifica se o arquivo é um CSV
-    if not file.filename.endswith(".csv"):
+    if not file.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="O arquivo deve ser um CSV.")
 
     try:
-        # Lê o arquivo CSV
+        # Lê o conteúdo do arquivo
         contents = await file.read()
         df = pd.read_csv(StringIO(contents.decode('utf-8')))
     except Exception as e:
-        raise HTTPException(status_code=400, detail="Erro ao ler o arquivo CSV.")
+        raise HTTPException(status_code=400, detail=f"Erro ao ler o arquivo CSV: {str(e)}")
+
+    # Remove espaços dos nomes das colunas
+    df.columns = df.columns.str.strip()
 
     # Verifica se a coluna de telefone existe
     if coluna_telefone not in df.columns:
         raise HTTPException(
             status_code=400,
-            detail=f"A coluna '{coluna_telefone}' não foi encontrada no arquivo CSV."
+            detail=f"A coluna '{coluna_telefone}' não foi encontrada no arquivo CSV. "
+                   f"Colunas disponíveis: {df.columns.tolist()}"
         )
 
-    # Aplica a formatação
-    df[coluna_telefone] = df[coluna_telefone].apply(formatar_telefone)
+    try:
+        # Aplica a formatação aos telefones
+        df[coluna_telefone] = df[coluna_telefone].astype(str).apply(formatar_numero)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao formatar os telefones: {str(e)}")
 
     try:
-        # Salva o resultado em um novo CSV
+        # Gera o CSV com os números formatados
         output = StringIO()
         df.to_csv(output, index=False)
         output.seek(0)
-        byte_io = BytesIO(output.getvalue().encode('utf-8'))
-
-        # Prepara a resposta como um arquivo para download
         return StreamingResponse(
-            byte_io,
+            BytesIO(output.getvalue().encode('utf-8')),
             media_type="text/csv",
             headers={
                 "Content-Disposition": f"attachment; filename=telefones_formatados_{file.filename}"
             }
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail="Erro ao processar o arquivo CSV.")
+        raise HTTPException(status_code=500, detail=f"Erro ao salvar o arquivo CSV: {str(e)}")
 
 @app.get("/")
 async def root():
