@@ -20,52 +20,66 @@ app.add_middleware(
 
 def normalizar_telefone(numero: str) -> str:
     """
-    Remove todos os caracteres que não são dígitos do número de telefone.
+    Remove todos os caracteres que não são dígitos do número.
     """
     return re.sub(r'\D', '', numero)
 
 
 def formatar_numero(numero: str) -> str:
     """
-    Formata o número de telefone para o padrão E.164: +55[DDD][Número]
+    Formata o número para o padrão E.164 (+55[DDD][Número]) aplicando as regras:
+      - Se o DDD for menor que 30, o número (geralmente móvel) deve conter o dígito 9.
+        Caso o número local não comece com '9', adiciona-o à esquerda.
+      - Se o DDD for maior ou igual a 30, o número (fixo) não deve conter o dígito 9 extra.
+        Assim, se o número local tiver 9 dígitos e iniciar com '9', remove-se esse primeiro dígito.
 
-    Regras:
-      - Se o DDD for maior ou igual a 30, o número local não deve conter o dígito 9.
-        Assim, se o número local tiver 9 dígitos e iniciar com '9', remove-se apenas o primeiro dígito.
-      - Se o DDD for menor que 30, o número local deve conter o dígito 9.
-        Se estiver com 8 dígitos (e não iniciar com '9'), adiciona-se o dígito '9' no início.
+    A função também remove um eventual prefixo “0” e o código do país “55”, se presentes.
+
+    Se o número, após a normalização, não tiver 10 ou 11 dígitos, o valor original é retornado.
     """
-    numero_limpo = normalizar_telefone(numero)
+    original = numero
+    # Remove todos os caracteres não numéricos
+    digits = normalizar_telefone(numero)
 
-    # Remove o código do país '55' se presente
-    if numero_limpo.startswith('55'):
-        numero_limpo = numero_limpo[2:]
+    # Remove um eventual prefixo de trunk (0)
+    if digits.startswith('0'):
+        digits = digits[1:]
 
-    # Após remover o código do país, esperamos 10 ou 11 dígitos (2 para DDD + 8 ou 9 para o número local)
-    if len(numero_limpo) not in (10, 11):
-        return numero  # Retorna o número original se o tamanho não for válido
+    # Remove o código do país, se estiver presente
+    if digits.startswith('55'):
+        digits = digits[2:]
 
-    ddd = numero_limpo[:2]
-    parte_local = numero_limpo[2:]
+    # Após esses ajustes, o número deve ter 10 ou 11 dígitos (2 para DDD + 8 ou 9 para o local)
+    if len(digits) not in (10, 11):
+        return original  # Se não tiver tamanho esperado, retorna o número original
 
-    if int(ddd) >= 30:
-        # Para DDD ≥ 30, o número local deve ter 8 dígitos.
-        # Se estiver com 9 dígitos e iniciar com '9', remove APENAS o primeiro dígito.
-        if len(parte_local) == 9 and parte_local.startswith('9'):
-            parte_local = parte_local[1:]
+    ddd = digits[:2]
+    local = digits[2:]
+
+    try:
+        ddd_int = int(ddd)
+    except ValueError:
+        return original  # Em caso de problema com o DDD, retorna o original
+
+    # Para DDD < 30 (região onde os celulares devem conter o dígito 9)
+    if ddd_int < 30:
+        # Se o número local não começar com '9', adiciona-o;
+        # caso já comece com '9', considera que está correto.
+        if not local.startswith('9'):
+            local = '9' + local
     else:
-        # Para DDD < 30, o número local deve ter 9 dígitos.
-        # Se estiver com 8 dígitos e não iniciar com '9', adiciona o dígito '9'.
-        if len(parte_local) == 8 and not parte_local.startswith('9'):
-            parte_local = '9' + parte_local
+        # Para DDD ≥ 30 (números fixos, que não levam o nono dígito)
+        # Se o número local tiver 9 dígitos e iniciar com '9', remove o primeiro dígito.
+        if len(local) == 9 and local.startswith('9'):
+            local = local[1:]
 
-    return f"+55{ddd}{parte_local}"
+    return f"+55{ddd}{local}"
 
 
 def detectar_formato_arquivo(filename: str) -> str:
     """
-    Detecta o formato do arquivo com base na extensão.
-    Retorna a extensão em letras minúsculas.
+    Detecta o formato do arquivo com base na extensão,
+    retornando a extensão em letras minúsculas.
     """
     _, ext = os.path.splitext(filename)
     return ext.lower()
@@ -135,9 +149,11 @@ async def formatar_telefones(
         elif formato in ['.xlsx', '.xls']:
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 df.to_excel(writer, index=False, sheet_name='Sheet1')
-            mime_type = ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                         if formato == '.xlsx'
-                         else "application/vnd.ms-excel")
+            mime_type = (
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                if formato == '.xlsx'
+                else "application/vnd.ms-excel"
+            )
             extension = ".xlsx" if formato == '.xlsx' else ".xls"
         elif formato == '.tsv':
             df.to_csv(output, index=False, sep='\t')
