@@ -20,47 +20,52 @@ app.add_middleware(
 
 def normalizar_telefone(numero: str) -> str:
     """
-    Remove todos os caracteres que não são números de um telefone.
+    Remove todos os caracteres que não são dígitos do número de telefone.
     """
     return re.sub(r'\D', '', numero)
 
 
 def formatar_numero(numero: str) -> str:
     """
-    Formata o número de telefone para o padrão:
-    +55[DDD][Número com ou sem nono dígito, dependendo do DDD].
+    Formata o número de telefone para o padrão E.164: +55[DDD][Número]
+
+    Regras:
+      - Se o DDD for maior ou igual a 30, o número local não deve conter o dígito 9.
+        Assim, se o número local tiver 9 dígitos e iniciar com '9', remove-se apenas o primeiro dígito.
+      - Se o DDD for menor que 30, o número local deve conter o dígito 9.
+        Se estiver com 8 dígitos (e não iniciar com '9'), adiciona-se o dígito '9' no início.
     """
-    # Remove caracteres não numéricos
-    numero_normalizado = normalizar_telefone(numero)
+    numero_limpo = normalizar_telefone(numero)
 
-    # Verifica se o número já possui código do país
-    if numero_normalizado.startswith('55'):
-        numero_normalizado = numero_normalizado[2:]  # Remove o '55'
+    # Remove o código do país '55' se presente
+    if numero_limpo.startswith('55'):
+        numero_limpo = numero_limpo[2:]
 
-    # Verifica se o número tem pelo menos 10 dígitos (2 DDD + 8 número)
-    if len(numero_normalizado) < 10:
-        return numero  # Retorna o número original se for inválido
+    # Após remover o código do país, esperamos 10 ou 11 dígitos (2 para DDD + 8 ou 9 para o número local)
+    if len(numero_limpo) not in (10, 11):
+        return numero  # Retorna o número original se o tamanho não for válido
 
-    # Extrai DDD e o restante do número
-    ddd = numero_normalizado[:2]
-    restante = numero_normalizado[2:]
+    ddd = numero_limpo[:2]
+    parte_local = numero_limpo[2:]
 
-    # Aplica a regra do nono dígito
-    if int(ddd) >= 30:  # DDD maior ou igual a 30
-        if restante.startswith('9'):
-            restante = restante[1:]  # Remove o '9' inicial
-    else:  # DDD menor que 30
-        if not restante.startswith('9'):
-            restante = '9' + restante  # Adiciona o '9' inicial
+    if int(ddd) >= 30:
+        # Para DDD ≥ 30, o número local deve ter 8 dígitos.
+        # Se estiver com 9 dígitos e iniciar com '9', remove APENAS o primeiro dígito.
+        if len(parte_local) == 9 and parte_local.startswith('9'):
+            parte_local = parte_local[1:]
+    else:
+        # Para DDD < 30, o número local deve ter 9 dígitos.
+        # Se estiver com 8 dígitos e não iniciar com '9', adiciona o dígito '9'.
+        if len(parte_local) == 8 and not parte_local.startswith('9'):
+            parte_local = '9' + parte_local
 
-    # Retorna o número no formato final
-    return f"+55{ddd}{restante}"
+    return f"+55{ddd}{parte_local}"
 
 
 def detectar_formato_arquivo(filename: str) -> str:
     """
     Detecta o formato do arquivo com base na extensão.
-    Retorna o formato em letras minúsculas.
+    Retorna a extensão em letras minúsculas.
     """
     _, ext = os.path.splitext(filename)
     return ext.lower()
@@ -90,7 +95,6 @@ async def formatar_telefones(
         elif formato == '.tsv':
             df = pd.read_csv(StringIO(contents.decode('utf-8')), sep='\t')
         else:
-            # Caso deseje suportar mais formatos, adicione aqui
             raise HTTPException(
                 status_code=400,
                 detail=f"Formato de arquivo não suportado: {formato}"
@@ -111,7 +115,7 @@ async def formatar_telefones(
                    f"Colunas disponíveis: {df.columns.tolist()}"
         )
 
-    # Obter o nome exato da coluna (respeitando a capitalização)
+    # Obtém o nome exato da coluna (respeitando a capitalização)
     indice_coluna = colunas_lower.index(coluna_telefone_lower)
     coluna_telefone_real = df.columns[indice_coluna]
 
@@ -128,25 +132,23 @@ async def formatar_telefones(
             df.to_csv(output, index=False)
             mime_type = "text/csv"
             extension = ".csv"
-            output.seek(0)
         elif formato in ['.xlsx', '.xls']:
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 df.to_excel(writer, index=False, sheet_name='Sheet1')
-            mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" if formato == '.xlsx' else "application/vnd.ms-excel"
+            mime_type = ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                         if formato == '.xlsx'
+                         else "application/vnd.ms-excel")
             extension = ".xlsx" if formato == '.xlsx' else ".xls"
-            output.seek(0)
         elif formato == '.tsv':
             df.to_csv(output, index=False, sep='\t')
             mime_type = "text/tab-separated-values"
             extension = ".tsv"
-            output.seek(0)
         else:
-            # Para formatos adicionais, adicione aqui
             raise HTTPException(
                 status_code=400,
                 detail=f"Formato de arquivo não suportado para saída: {formato}"
             )
-
+        output.seek(0)
         return StreamingResponse(
             output,
             media_type=mime_type,
